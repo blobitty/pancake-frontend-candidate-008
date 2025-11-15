@@ -9,7 +9,7 @@ export const useIsRecipientError = () => {
   const { recipient } = useSwapState()
   const allowRecipient = useAllowRecipient()
   const debounceEnsName = useDebounce(recipient, 500)
-  const recipientENSAddress = useGetENSAddressByName(debounceEnsName ?? undefined)
+  const { address: recipientENSAddress } = useGetENSAddressByName(debounceEnsName ?? undefined)
 
   const isRecipientError = useMemo(() => {
     if (!allowRecipient || recipient === null) return false

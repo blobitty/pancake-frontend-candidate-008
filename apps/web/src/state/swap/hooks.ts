@@ -67,7 +67,7 @@ export function useDerivedSwapInfo(
 } {
   const { address: account } = useAccount()
   const { t } = useTranslation()
-  const recipientENSAddress = useGetENSAddressByName(recipient)
+  const { address: recipientENSAddress } = useGetENSAddressByName(recipient)
 
   const to: string | null =
     (recipient === null ? account : safeGetAddress(recipient) || safeGetAddress(recipientENSAddress) || null) ?? null

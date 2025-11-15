@@ -10,23 +10,28 @@ const ENS_NAME_REGEX = /^[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-
 
 const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/
 
-export const useGetENSAddressByName = (ensNameOrAddress?: string) => {
+export const useGetENSAddressByName = (ensNameOrAddress?: string | null) => {
   const { chainId } = useActiveChainId()
   const ensSupported = useMemo(
     () => Boolean(chainId && ENS_SUPPORT_CHAIN_IDS.includes(chainId as (typeof ENS_SUPPORT_CHAIN_IDS)[number])),
     [chainId],
   )
-  const { data: recipientENSAddress } = useEnsAddress({
-    name: ensNameOrAddress,
+  const {
+    data: recipientENSAddress,
+    isLoading,
+    isError,
+  } = useEnsAddress({
+    name: ensNameOrAddress ?? undefined,
     chainId,
     query: {
       enabled:
         typeof ensNameOrAddress !== 'undefined' &&
+        ensNameOrAddress !== null &&
         (ENS_NAME_REGEX.test(ensNameOrAddress) || ADDRESS_REGEX.test(ensNameOrAddress)) &&
         chainId !== ChainId.BSC &&
         chainId !== ChainId.BSC_TESTNET &&
         ensSupported,
     },
   })
-  return recipientENSAddress
+  return { address: recipientENSAddress, isLoading, isError }
 }
