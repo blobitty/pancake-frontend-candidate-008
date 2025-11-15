@@ -1,5 +1,6 @@
+import { useDebounce } from '@pancakeswap/hooks'
 import { useTranslation } from '@pancakeswap/localization'
-import { Token } from '@pancakeswap/sdk'
+import { Token, ERC20Token } from '@pancakeswap/sdk'
 import {
   AutoColumn,
   BscScanIcon,
@@ -14,12 +15,15 @@ import {
 import Row, { RowBetween, RowFixed } from 'components/Layout/Row'
 import { CurrencyLogo } from 'components/Logo'
 import { useTokenByChainId } from 'hooks/Tokens'
+import { useGetENSAddressByName } from 'hooks/useGetENSAddressByName'
 import { useActiveChainId } from 'hooks/useActiveChainId'
 import { RefObject, useCallback, useMemo, useRef, useState } from 'react'
 import { useRemoveUserAddedToken } from 'state/user/hooks'
 import useUserAddedTokens from 'state/user/hooks/useUserAddedTokens'
 import { styled } from 'styled-components'
 import { getBlockExploreLink, safeGetAddress } from 'utils'
+import { useReadContracts } from '@pancakeswap/wagmi'
+import { erc20Abi, type Address } from 'viem'
 import ImportRow from './ImportRow'
 import { CurrencyModalView } from './types'
 
@@ -39,6 +43,8 @@ const Footer = styled.div`
   align-items: center;
 `
 
+const ENS_NAME_REGEX = /^[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=]*)?$/
+
 export default function ManageTokens({
   setModalView,
   setImportToken,
@@ -55,18 +61,121 @@ export default function ManageTokens({
 
   const [searchQuery, setSearchQuery] = useState<string>('')
 
-  // manage focus on modal show
   const inputRef = useRef<HTMLInputElement>()
   const handleInput = useCallback((event) => {
     const input = event.target.value
+    // Don't checksum ENS names, only addresses
     const checksummedInput = safeGetAddress(input)
     setSearchQuery(checksummedInput || input)
   }, [])
 
-  // if they input an address, use it
-  const searchToken = useTokenByChainId(searchQuery, chainId)
+  const debouncedSearchQuery = useDebounce(searchQuery, 500)
 
-  // all tokens for local list
+  const { address: resolvedENSAddress } = useGetENSAddressByName(debouncedSearchQuery)
+
+  const isResolvingENS = useMemo(() => {
+    return Boolean(
+      debouncedSearchQuery && ENS_NAME_REGEX.test(debouncedSearchQuery) && !safeGetAddress(debouncedSearchQuery),
+    )
+  }, [debouncedSearchQuery])
+
+  const tokenAddress = useMemo(() => {
+    if (safeGetAddress(searchQuery)) {
+      return searchQuery
+    }
+    if (resolvedENSAddress) {
+      return safeGetAddress(resolvedENSAddress) || undefined
+    }
+    return undefined
+  }, [searchQuery, resolvedENSAddress])
+
+  const knownToken = useTokenByChainId(tokenAddress, chainId)
+
+  const shouldCheckContract = useMemo(() => {
+    return Boolean(
+      tokenAddress &&
+        chainId &&
+        knownToken === undefined &&
+        (isResolvingENS ? resolvedENSAddress : safeGetAddress(searchQuery)),
+    )
+  }, [tokenAddress, chainId, knownToken, isResolvingENS, resolvedENSAddress, searchQuery])
+
+  const {
+    data: tokenContractData,
+    isLoading: isCheckingToken,
+    isError: isNotToken,
+  } = useReadContracts({
+    allowFailure: true,
+    contracts:
+      shouldCheckContract && tokenAddress
+        ? [
+            {
+              chainId,
+              address: tokenAddress as Address,
+              abi: erc20Abi,
+              functionName: 'decimals',
+            },
+            {
+              chainId,
+              address: tokenAddress as Address,
+              abi: erc20Abi,
+              functionName: 'symbol',
+            },
+            {
+              chainId,
+              address: tokenAddress as Address,
+              abi: erc20Abi,
+              functionName: 'name',
+            },
+          ]
+        : [],
+    query: {
+      enabled: shouldCheckContract,
+      staleTime: Infinity,
+    },
+  })
+
+  const searchToken = useMemo(() => {
+    if (knownToken) return knownToken
+
+    if (knownToken === null) return null
+
+    if (tokenAddress && chainId && tokenContractData) {
+      const results = tokenContractData
+      if (results[0]?.status === 'success' && results[1]?.status === 'success' && results[2]?.status === 'success') {
+        return new ERC20Token(
+          chainId,
+          tokenAddress as Address,
+          results[0].result as number,
+          (results[1].result as string) ?? 'UNKNOWN',
+          (results[2].result as string) ?? 'Unknown Token',
+        )
+      }
+    }
+
+    return undefined
+  }, [knownToken, tokenAddress, chainId, tokenContractData])
+
+  const ensResolvedButNoToken = useMemo(() => {
+    return Boolean(
+      isResolvingENS &&
+        resolvedENSAddress &&
+        tokenAddress &&
+        !isCheckingToken &&
+        (isNotToken || searchToken === undefined) &&
+        searchQuery === debouncedSearchQuery,
+    )
+  }, [
+    isResolvingENS,
+    resolvedENSAddress,
+    tokenAddress,
+    isCheckingToken,
+    isNotToken,
+    searchToken,
+    searchQuery,
+    debouncedSearchQuery,
+  ])
+
   const userAddedTokens: Token[] = useUserAddedTokens(chainId)
   const removeToken = useRemoveUserAddedToken()
 
@@ -108,7 +217,12 @@ export default function ManageTokens({
     )
   }, [userAddedTokens, chainId, removeToken])
 
-  const isAddressValid = searchQuery === '' || safeGetAddress(searchQuery)
+  const isAddressValid = useMemo(() => {
+    if (searchQuery === '') return true
+    if (safeGetAddress(searchQuery)) return true
+    if (ENS_NAME_REGEX.test(searchQuery)) return true
+    return false
+  }, [searchQuery])
 
   return (
     <Wrapper>
@@ -118,7 +232,7 @@ export default function ManageTokens({
             <Input
               id="token-search-input"
               scale="lg"
-              placeholder="0x0000"
+              placeholder="0x0000 or name.eth"
               value={searchQuery}
               autoComplete="off"
               ref={inputRef as RefObject<HTMLInputElement>}
@@ -126,7 +240,18 @@ export default function ManageTokens({
               isWarning={!isAddressValid}
             />
           </Row>
-          {!isAddressValid && <Text color="failure">{t('Enter valid token address')}</Text>}
+          {!isAddressValid && searchQuery && <Text color="failure">{t('Enter valid token address or ENS name')}</Text>}
+          {isResolvingENS && !resolvedENSAddress && <Text color="textSubtle">{t('Resolving ENS name...')}</Text>}
+          {isResolvingENS && resolvedENSAddress && isCheckingToken && (
+            <Text color="textSubtle">{t('Checking if address is a token contract...')}</Text>
+          )}
+          {ensResolvedButNoToken && (
+            <Text color="failure">
+              {t('ENS name resolved to %address%, but this address is not a token contract', {
+                address: `${tokenAddress?.slice(0, 6)}...${tokenAddress?.slice(-4)}`,
+              })}
+            </Text>
+          )}
           {searchToken && (
             <ImportRow
               token={searchToken}

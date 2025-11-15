@@ -38,7 +38,7 @@ export function useSwapCallArguments(
   feeOptions: FeeOptions | undefined,
 ): SwapCall[] {
   const { account, chainId } = useAccountActiveChain()
-  const recipientENSAddress = useGetENSAddressByName(recipientAddressOrName ?? undefined)
+  const { address: recipientENSAddress } = useGetENSAddressByName(recipientAddressOrName ?? undefined)
   const recipient = (
     recipientAddressOrName === null || recipientAddressOrName === undefined
       ? account

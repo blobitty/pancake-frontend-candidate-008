@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ASSET_CDN } from 'config/constants/endpoints'
 import { walletsConfig } from 'config/wallet'
 import { useActiveChainId } from 'hooks/useActiveChainId'
+import { useDomainNameForAddress } from 'hooks/useDomain'
 import { useIsSmartAccount } from 'hooks/useIsSmartAccount'
 import { useAtom } from 'jotai'
 import { useMemo } from 'react'
@@ -133,6 +134,7 @@ export const CopyAddress: React.FC<React.PropsWithChildren<CopyAddressProps>> = 
   const { connectAsync } = useConnect()
   const { chainId } = useActiveChainId()
   const isSmartAccount = useIsSmartAccount()
+  const { domainName } = useDomainNameForAddress(account)
 
   const [previouslyUsedWalletsId] = useAtom(previouslyUsedWalletsAtom)
   const [socialProvider] = useSocialLoginProviderAtom()
@@ -173,7 +175,7 @@ export const CopyAddress: React.FC<React.PropsWithChildren<CopyAddressProps>> = 
           )}
         </WalletIcon>
         <AddressBox>
-          <WalletAddress title={account}>{formatAddress(account)}</WalletAddress>
+          <WalletAddress title={account}>{domainName ?? formatAddress(account)}</WalletAddress>
         </AddressBox>
         <CopyButtonWrapper>
           <CopyButton width="16px" text={account ?? ''} tooltipMessage={tooltipMessage} />

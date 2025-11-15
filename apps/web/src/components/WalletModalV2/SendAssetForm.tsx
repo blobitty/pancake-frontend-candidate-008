@@ -10,14 +10,21 @@ import {
   Button,
   CloseIcon,
   FlexGap,
+  GithubIcon,
   IconButton,
   Input,
   LazyAnimatePresence,
+  LinkExternal,
+  LinkIcon,
+  ProfileAvatar,
+  Skeleton,
   Text,
+  TwitterIcon,
   domAnimation,
   useToast,
 } from '@pancakeswap/uikit'
 import tryParseAmount from '@pancakeswap/utils/tryParseAmount'
+import truncateHash from '@pancakeswap/utils/truncateHash'
 import { SwapUIV2 } from '@pancakeswap/widgets-internal'
 import CurrencyLogo from 'components/Logo/CurrencyLogo'
 import { ToastDescriptionWithTx } from 'components/Toast'
@@ -26,6 +33,8 @@ import { BalanceData } from 'hooks/useAddressBalance'
 import useCatchTxError from 'hooks/useCatchTxError'
 import { useERC20 } from 'hooks/useContract'
 import { useCurrencyUsdPrice } from 'hooks/useCurrencyUsdPrice'
+import { useDomainNameForAddress } from 'hooks/useDomain'
+import { useGetENSAddressByName } from 'hooks/useGetENSAddressByName'
 import useNativeCurrency from 'hooks/useNativeCurrency'
 import { useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import styled from 'styled-components'
@@ -70,8 +79,6 @@ const ChainIconWrapper = styled(Box)`
   z-index: 1;
 `
 
-// No longer need these styled components since we're using CurrencyInputPanelSimplify
-
 const AddressInputWrapper = styled(Box)`
   margin-bottom: 4px;
 `
@@ -84,6 +91,48 @@ const ClearButton = styled(IconButton)`
 const ErrorMessage = styled(Text)`
   color: ${({ theme }) => theme.colors.failure};
   font-size: 14px;
+`
+
+const ENS_NAME_REGEX = /^[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=]*)?$/
+
+const RecipientInfo = styled(FlexGap)`
+  align-items: center;
+  padding: 12px 16px;
+  background: ${({ theme }) => theme.colors.input};
+  border-radius: 16px;
+  margin-top: 8px;
+`
+
+const RecipientAddressText = styled(Text)`
+  font-size: 14px;
+  font-weight: 600;
+  color: ${({ theme }) => theme.colors.text};
+`
+
+const SocialMediaLinks = styled(FlexGap)`
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+`
+
+const SocialLink = styled(LinkExternal)`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: ${({ theme }) => theme.colors.textSubtle};
+  font-size: 12px;
+  transition: opacity 0.2s;
+  &:hover {
+    opacity: 0.8;
+  }
+`
+
+const SocialIconWrapper = styled(Box)`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
 `
 
 export interface SendAssetFormProps {
@@ -106,6 +155,51 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
   const [estimatedFeeUsd, setEstimatedFeeUsd] = useState<string | null>(null)
   const [isInputFocus, setIsInputFocus] = useState(false)
 
+  // Check if input is an ENS name
+  const isEnsName = useMemo(() => {
+    return Boolean(debouncedAddress && ENS_NAME_REGEX.test(debouncedAddress))
+  }, [debouncedAddress])
+
+  // Resolve ENS name to address
+  const {
+    address: resolvedAddress,
+    isLoading: isResolvingEns,
+    isError: isEnsResolutionError,
+  } = useGetENSAddressByName(isEnsName ? debouncedAddress : undefined)
+
+  // Determine the actual address to use (resolved ENS address or direct address)
+  const recipientAddress = useMemo(() => {
+    if (!debouncedAddress) return undefined
+    if (isAddress(debouncedAddress)) {
+      return debouncedAddress as `0x${string}`
+    }
+    if (isEnsName && resolvedAddress) {
+      return resolvedAddress as `0x${string}`
+    }
+    return undefined
+  }, [debouncedAddress, isEnsName, resolvedAddress])
+
+  // Determine the display name (ENS name if entered, or resolved ENS name from address)
+  const displayName = useMemo(() => {
+    if (isEnsName) {
+      return debouncedAddress
+    }
+    return undefined
+  }, [debouncedAddress, isEnsName])
+
+  const isValidRecipientAddress = useMemo((): boolean => {
+    return Boolean(recipientAddress && !addressError)
+  }, [recipientAddress, addressError])
+
+  const {
+    domainName,
+    avatar,
+    socialMedia,
+    isLoading: isDomainLoading,
+  } = useDomainNameForAddress(recipientAddress, Boolean(recipientAddress))
+
+  const finalDisplayName = displayName || domainName
+
   const [txHash, setTxHash] = useState<string | undefined>(undefined)
   const { address: accountAddress } = useAccount()
   const publicClient = usePublicClient({ chainId: asset.chainId })
@@ -113,7 +207,6 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
   const { fetchWithCatchTxError, loading: attemptingTxn } = useCatchTxError()
   const { includeStarterGas, nativeAmount, isUserInsufficientBalance } = useSendGiftContext()
 
-  // Get native currency for fee calculation
   const nativeCurrency = useNativeCurrency(asset.chainId)
   const { data: nativeCurrencyPrice } = useCurrencyUsdPrice(nativeCurrency)
   const currency = useMemo(
@@ -139,7 +232,7 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
   const { sendTransactionAsync } = useSendTransaction()
 
   const estimateTransactionFee = useCallback(async () => {
-    if (!address || !amount || !publicClient || !accountAddress) return
+    if (!recipientAddress || !amount || !publicClient || !accountAddress) return
 
     try {
       let gasEstimate: bigint = 0n
@@ -149,13 +242,13 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
         gasEstimate =
           (await publicClient.estimateGas({
             account: accountAddress,
-            to: address as `0x${string}`,
+            to: recipientAddress,
             value: tryParseAmount(amount, currency)?.quotient ?? 0n,
           })) ?? 0n
       } else {
         // For ERC20 tokens, estimate gas for a transfer call
         const transferData = {
-          to: address as `0x${string}`,
+          to: recipientAddress,
           amount: tryParseAmount(amount, currency)?.quotient ?? 0n,
         }
         gasEstimate =
@@ -187,22 +280,35 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
       setEstimatedFee(null)
       setEstimatedFeeUsd(null)
     }
-  }, [address, amount, publicClient, accountAddress, isNativeToken, currency, nativeCurrencyPrice, erc20Contract])
+  }, [
+    recipientAddress,
+    amount,
+    publicClient,
+    accountAddress,
+    isNativeToken,
+    currency,
+    nativeCurrencyPrice,
+    erc20Contract,
+  ])
 
   const sendAsset = useCallback(async () => {
+    if (!recipientAddress) {
+      return undefined
+    }
+
     const amounts = tryParseAmount(amount, currency)
 
     const receipt = await fetchWithCatchTxError(async () => {
       if (isNativeToken) {
         // Handle native token transfer
         return sendTransactionAsync({
-          to: address as `0x${string}`,
+          to: recipientAddress,
           value: amounts?.quotient ?? 0n,
           chainId: asset.chainId,
         })
       }
       // Handle ERC20 token transfer
-      return erc20Contract?.write?.transfer([address as `0x${string}`, amounts?.quotient ?? 0n], {
+      return erc20Contract?.write?.transfer([recipientAddress, amounts?.quotient ?? 0n], {
         account: erc20Contract.account!,
         chain: erc20Contract.chain!,
       })
@@ -210,23 +316,23 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
 
     if (receipt?.status) {
       setTxHash(receipt.transactionHash)
+      const displayAddress = finalDisplayName || `${recipientAddress.slice(0, 8)}...${recipientAddress.slice(-8)}`
       toastSuccess(
         `${t('Transaction Submitted')}!`,
         <ToastDescriptionWithTx txHash={receipt.transactionHash}>
           {t('Your %symbol% has been sent to %address%', {
             symbol: currency?.symbol,
-            address: `${address?.slice(0, 8)}...${address?.slice(-8)}`,
+            address: displayAddress,
           })}
         </ToastDescriptionWithTx>,
       )
-      // Reset form after successful transaction
       setAmount('')
       setAddress('')
     }
 
     return receipt
   }, [
-    address,
+    recipientAddress,
     amount,
     erc20Contract,
     isNativeToken,
@@ -236,6 +342,7 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
     t,
     toastSuccess,
     currency,
+    finalDisplayName,
   ])
 
   const handleAddressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -243,14 +350,37 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
     setAddress(value)
   }
 
-  // Use debounced address for validation to avoid checking on every keystroke
   useEffect(() => {
-    if (debouncedAddress && !isAddress(debouncedAddress)) {
-      setAddressError(t('Invalid wallet address'))
-    } else {
+    if (!debouncedAddress) {
       setAddressError('')
+      return
     }
-  }, [debouncedAddress, t])
+
+    if (isAddress(debouncedAddress)) {
+      setAddressError('')
+      return
+    }
+
+    if (ENS_NAME_REGEX.test(debouncedAddress)) {
+      if (isEnsName && resolvedAddress) {
+        setAddressError('')
+        return
+      }
+      if (isEnsName && isEnsResolutionError && !isResolvingEns) {
+        setAddressError(t('ENS name not found'))
+        return
+      }
+      if (isEnsName && isResolvingEns) {
+        setAddressError('')
+        return
+      }
+      setAddressError('')
+      return
+    }
+
+    // Invalid format
+    setAddressError(t('Invalid wallet address or ENS name'))
+  }, [debouncedAddress, isEnsName, resolvedAddress, isResolvingEns, isEnsResolutionError, t])
 
   const handleClearAddress = () => {
     setAddress('')
@@ -288,30 +418,26 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
   const isGiftTokenAmountValid = useMemo(() => {
     if (isSendGiftSupported && amount && !isInsufficientBalance) {
       const valueInUsd = parseFloat(amount) * price
-      // NOTE: user can only send gift with amount greater than $1
       const LIMIT_AMOUNT_USD = 1
 
-      // if value is 0, user is not inputting any amount, so make it valid
-      // avoid showing error message when user is not inputting any amount
       return valueInUsd === 0 || valueInUsd >= LIMIT_AMOUNT_USD
     }
 
     return true
   }, [isSendGiftSupported, amount, isInsufficientBalance, price])
 
-  // Effect to estimate fee when address and amount are valid
   useEffect(() => {
-    if (address && amount && !addressError) {
+    if (recipientAddress && amount && !addressError) {
       estimateTransactionFee()
     } else {
       setEstimatedFee(null)
     }
-  }, [address, amount, addressError, estimateTransactionFee])
+  }, [recipientAddress, amount, addressError, estimateTransactionFee])
 
   const isValidAddress = useMemo(() => {
     // send gift doesn't need to check address
-    return isSendGiftSupported ? true : address && !addressError
-  }, [address, addressError, isSendGiftSupported])
+    return isSendGiftSupported ? true : recipientAddress && !addressError
+  }, [recipientAddress, addressError, isSendGiftSupported])
 
   if (viewState === ViewState.CONFIRM_TRANSACTION && isSendGiftSupported) {
     return <CreateGiftView key={viewState} tokenAmount={tokenAmount} />
@@ -322,7 +448,7 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
       <SendTransactionFlow
         asset={asset}
         amount={amount}
-        recipient={address as string}
+        recipient={recipientAddress as string}
         onDismiss={() => {
           onViewStateChange(ViewState.SEND_ASSETS)
           setTxHash(undefined)
@@ -358,7 +484,7 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
                     <Input
                       value={address ?? ''}
                       onChange={handleAddressChange}
-                      placeholder="Recipient address"
+                      placeholder="Recipient address or ENS name"
                       style={{ height: '64px' }}
                       isError={Boolean(addressError)}
                     />
@@ -375,6 +501,53 @@ export const SendAssetForm: React.FC<SendAssetFormProps> = ({ asset, onViewState
                   </Box>
                 </AddressInputWrapper>
                 {addressError && <ErrorMessage>{addressError}</ErrorMessage>}
+                {isValidRecipientAddress && (
+                  <RecipientInfo gap="12px">
+                    {isDomainLoading && !domainName ? (
+                      <>
+                        <Skeleton variant="circle" width="32px" height="32px" />
+                        <Skeleton width="120px" height="20px" />
+                      </>
+                    ) : (
+                      <>
+                        <ProfileAvatar
+                          width={32}
+                          height={32}
+                          src={avatar}
+                          style={{ minWidth: '32px', minHeight: '32px', flexShrink: 0 }}
+                        />
+                        <RecipientAddressText>
+                          {finalDisplayName || truncateHash(recipientAddress || (debouncedAddress as string))}
+                        </RecipientAddressText>
+                        {socialMedia && (
+                          <SocialMediaLinks gap="8px">
+                            {socialMedia.twitter && (
+                              <SocialLink href={`https://twitter.com/${socialMedia.twitter}`} external fontSize="12px">
+                                <SocialIconWrapper>
+                                  <TwitterIcon width="16px" height="16px" color="white" />
+                                </SocialIconWrapper>
+                              </SocialLink>
+                            )}
+                            {socialMedia.github && (
+                              <SocialLink href={`https://github.com/${socialMedia.github}`} external fontSize="12px">
+                                <SocialIconWrapper>
+                                  <GithubIcon width="16px" height="16px" color="textSubtle" />
+                                </SocialIconWrapper>
+                              </SocialLink>
+                            )}
+                            {socialMedia.url && (
+                              <SocialLink href={socialMedia.url} external fontSize="12px">
+                                <SocialIconWrapper>
+                                  <LinkIcon width="16px" height="16px" color="textSubtle" />
+                                </SocialIconWrapper>
+                              </SocialLink>
+                            )}
+                          </SocialMediaLinks>
+                        )}
+                      </>
+                    )}
+                  </RecipientInfo>
+                )}
               </Box>
             )}
 

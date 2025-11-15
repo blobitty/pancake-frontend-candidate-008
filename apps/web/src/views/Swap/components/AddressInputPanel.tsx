@@ -83,7 +83,7 @@ export default function AddressInputPanel({
 
   const { t } = useTranslation()
   const debounceEnsName = useDebounce(value, 500)
-  const recipientENSAddress = useGetENSAddressByName(debounceEnsName)
+  const { address: recipientENSAddress } = useGetENSAddressByName(debounceEnsName)
 
   const address = safeGetAddress(value) ? value : safeGetAddress(recipientENSAddress)
 

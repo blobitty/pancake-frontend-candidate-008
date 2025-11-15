@@ -23,7 +23,7 @@ import { useAutoFillCode } from 'views/Gift/hooks/useAutoFillCode'
 import { ClaimGiftProvider, useClaimGiftContext } from 'views/Gift/providers/ClaimGiftProvider'
 import { SendGiftProvider, useSendGiftContext } from 'views/Gift/providers/SendGiftProvider'
 import { UnclaimedOnlyProvider } from 'views/Gift/providers/UnclaimedOnlyProvider'
-import { useAccount } from 'wagmi'
+import { useAccount, useEnsAvatar, useEnsName } from 'wagmi'
 import { MenuTabProvider, useMenuTab, WalletView } from './providers/MenuTabProvider'
 
 const UserMenuItems = ({ onReceiveClick, account }: { onReceiveClick: () => void; account: string | undefined }) => {
@@ -70,6 +70,8 @@ const UserMenu = () => {
   const { t } = useTranslation()
   const { address: account, connector } = useAccount()
   const { ready, authenticated, user } = usePrivy()
+  const { data: name } = useEnsName({ address: account, chainId: 1 })
+  const { data: ensAvatar } = useEnsAvatar({ name: name ?? undefined, chainId: 1 })
 
   // Use new Privy wallet address hook to prevent flickering
   const { address: privyAddress, isLoading: isPrivyAddressLoading, addressType } = usePrivyWalletAddress()
@@ -86,7 +88,6 @@ const UserMenu = () => {
   const [userMenuText, setUserMenuText] = useState<string>('')
   const [userMenuVariable, setUserMenuVariable] = useState<UserMenuVariant>('default')
   const { isMobile } = useMatchBreakpoints()
-  // State for mobile modal
   const [showMobileWalletModal, setShowMobileWalletModal] = useState(false)
   const [showDesktopPopup] = useState(true)
   const [isReceiveModalOpen, setIsReceiveModalOpen] = useState(false)
@@ -94,7 +95,6 @@ const UserMenu = () => {
   const { reset: resetViewState, viewState } = useWalletModalV2ViewState()
   const { setCode, code: giftCode } = useClaimGiftContext()
   const { setNativeAmount, setIncludeStarterGas } = useSendGiftContext()
-  // State for click-based menu
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const { setView } = useMenuTab()
